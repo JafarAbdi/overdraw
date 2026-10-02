@@ -19,15 +19,7 @@ Or build it yourself with `cargo install --path .`.
 
 ## Usage
 
-Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the pointer becomes a crosshair and the left button paints. Press F9 or Escape to stop drawing; the strokes stay on screen until you clear them. It keeps running until you log out or `pkill overdraw`; a second instance refuses to start because F9 is already grabbed.
-
-## Autostart
-
-In `~/.config/i3/config`:
-
-```
-exec --no-startup-id overdraw
-```
+Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the pointer becomes a crosshair and the left button paints. Press F9 or Escape to stop drawing; the strokes stay on screen until you clear them. It keeps running until you stop it; a second instance refuses to start because F9 is already grabbed.
 
 ## Keys
 
@@ -44,10 +36,6 @@ exec --no-startup-id overdraw
 | `Escape`    | Stop drawing        |
 
 The colour and editing keys work while drawing mode is active.
-
-## i3
-
-Do not `bindsym F9` in your i3 config: the program grabs F9 itself and the two grabs conflict.
 
 ## Credits
 
