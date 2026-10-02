@@ -1,0 +1,23 @@
+[package]
+name = "overdraw"
+description = "Draw on top of your X11 screen while recording"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+x11rb = { version = "0.13", features = ["shape"] }
+xkeysym = "0.2"
+
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
