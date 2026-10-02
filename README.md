@@ -8,13 +8,26 @@ X11. No compositor needed: the strokes are shaped into an override-redirect wind
 
 ## Install
 
+A static x86_64 Linux binary is attached to every release:
+
 ```
-cargo install --path .
+wget -O ~/.local/bin/overdraw https://github.com/JafarAbdi/overdraw/releases/latest/download/overdraw
+chmod +x ~/.local/bin/overdraw
 ```
+
+Or build it yourself with `cargo install --path .`.
 
 ## Usage
 
-Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the pointer becomes a crosshair and the left button paints. Press F9 or Escape to stop drawing; the strokes stay on screen until you clear them or quit.
+Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the pointer becomes a crosshair and the left button paints. Press F9 or Escape to stop drawing; the strokes stay on screen until you clear them. It keeps running until you log out or `pkill overdraw`; a second instance refuses to start because F9 is already grabbed.
+
+## Autostart
+
+In `~/.config/i3/config`:
+
+```
+exec --no-startup-id overdraw
+```
 
 ## Keys
 
@@ -29,7 +42,6 @@ Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the
 | `Backspace` | Clear all strokes   |
 | `Ctrl+Z`    | Undo last stroke    |
 | `Escape`    | Stop drawing        |
-| `q`         | Quit                |
 
 The colour and editing keys work while drawing mode is active.
 

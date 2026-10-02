@@ -28,7 +28,6 @@ enum Mode {
 enum Outcome {
     Idle,
     Painted,
-    Quit,
 }
 
 struct Overlay {
@@ -141,7 +140,6 @@ impl Overlay {
                 match self.handle(ev)? {
                     Outcome::Idle => {}
                     Outcome::Painted => painted = true,
-                    Outcome::Quit => return Ok(()),
                 }
                 event = self.conn.poll_for_event()?;
             }
@@ -207,7 +205,6 @@ impl Overlay {
         }
         match keysym {
             key::F9 | key::Escape => self.set_mode(Mode::PassThrough)?,
-            key::q => return Ok(Outcome::Quit),
             key::BackSpace => {
                 self.strokes.clear();
                 self.redraw_all()?;

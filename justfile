@@ -13,4 +13,7 @@ lint:
 build:
     cargo build --release
 
+dist:
+    cargo build --release --locked --target x86_64-unknown-linux-musl
+
 ci: fmt-check lint build
