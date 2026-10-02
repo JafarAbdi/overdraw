@@ -57,6 +57,14 @@ repos:
     hooks:
       - id: yamllint
 
+  # ===== MARKDOWN =====
+  - repo: https://github.com/oxc-project/mirrors-oxfmt
+    rev: v0.67.0
+    hooks:
+      - id: oxfmt
+        types_or: [text]
+        files: \.(md|markdown)$
+
   # ===== GITHUB ACTIONS =====
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12

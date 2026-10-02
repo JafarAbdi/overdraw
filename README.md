@@ -18,18 +18,18 @@ Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the
 
 ## Keys
 
-| Key | Action |
-| --- | --- |
-| `F9` | Toggle drawing mode |
-| Left button | Draw |
-| `1` | Red |
-| `2` | Green |
-| `3` | Blue |
-| `4` | Yellow |
-| `Backspace` | Clear all strokes |
-| `Ctrl+Z` | Undo last stroke |
-| `Escape` | Stop drawing |
-| `q` | Quit |
+| Key         | Action              |
+| ----------- | ------------------- |
+| `F9`        | Toggle drawing mode |
+| Left button | Draw                |
+| `1`         | Red                 |
+| `2`         | Green               |
+| `3`         | Blue                |
+| `4`         | Yellow              |
+| `Backspace` | Clear all strokes   |
+| `Ctrl+Z`    | Undo last stroke    |
+| `Escape`    | Stop drawing        |
+| `q`         | Quit                |
 
 The colour and editing keys work while drawing mode is active.
 
