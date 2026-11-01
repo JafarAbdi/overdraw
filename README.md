@@ -37,6 +37,20 @@ Run `overdraw`. It starts invisible and grabs F9. Press F9 to start drawing; the
 
 The colour and editing keys work while drawing mode is active.
 
+## Event log
+
+`overdraw --events PATH` writes what you do to `PATH`, one JSON line per action. Screen recorders can use it to line annotations up with the video. Each line has `unix_us`, the time in microseconds since the Unix epoch, and an `action`:
+
+| `action`                      | Extra fields                                                           |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `draw_on`, `draw_off`, `undo` |                                                                        |
+| `color`                       | `color` as `#rrggbb`                                                   |
+| `stroke`                      | `stroke`: `start_unix_us`, `end_unix_us`, `color`, `points` as `[x,y]` |
+| `clear`                       | `count`: strokes removed                                               |
+| `click`                       | `button` and `x`, `y`, for clicks while not drawing                    |
+
+Coordinates are screen pixels. Clicks are logged but still reach the app under the pointer; the scroll wheel is not logged. Actions that change nothing, like undo with no strokes, write no line.
+
 ## Credits
 
 - [gromit-mpx](https://github.com/bk138/gromit-mpx) by Christian Beier and Simon Budig. The design is theirs: a root-sized override-redirect window shaped to the painted pixels, pointer and keyboard grabs while drawing, and a hotkey grabbed on the root window. No code was copied; gromit-mpx is GPL-2.0.

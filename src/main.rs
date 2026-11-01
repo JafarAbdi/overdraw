@@ -1,7 +1,14 @@
+use std::ffi::OsString;
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{Context, Result, bail, ensure};
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::Event;
 use x11rb::protocol::shape::{self, SK, SO};
+use x11rb::protocol::xinput::{self, Device, XIEventMask};
 use x11rb::protocol::xproto::{
     CapStyle, ChangeGCAux, ClipOrdering, ConfigureWindowAux, ConnectionExt as _, CoordMode,
     CreateGCAux, CreateWindowAux, Cursor, EventMask, Gcontext, GrabMode, GrabStatus, JoinStyle,
@@ -16,8 +23,57 @@ const PEN_COLORS: [(Keysym, u32); 4] =
     [(key::_1, 0xFF0000), (key::_2, 0x00FF00), (key::_3, 0x0080FF), (key::_4, 0xFFFF00)];
 
 struct Stroke {
+    start_unix_us: u128,
+    end_unix_us: u128,
     color: u32,
     points: Vec<Point>,
+}
+
+enum Action<'a> {
+    DrawOn,
+    DrawOff,
+    Color(u32),
+    Click { button: u32, x: i16, y: i16 },
+    Stroke(&'a Stroke),
+    Undo,
+    Clear(usize),
+}
+
+impl Action<'_> {
+    fn write(self, file: &mut File, unix_us: u128) -> Result<()> {
+        let mut line = Vec::new();
+        write!(line, "{{\"unix_us\":{unix_us},\"action\":")?;
+        match self {
+            Self::DrawOn => write!(line, "\"draw_on\"")?,
+            Self::DrawOff => write!(line, "\"draw_off\"")?,
+            Self::Color(color) => write!(line, "\"color\",\"color\":\"#{color:06x}\"")?,
+            Self::Click { button, x, y } => {
+                write!(line, "\"click\",\"button\":{button},\"x\":{x},\"y\":{y}")?;
+            }
+            Self::Stroke(stroke) => {
+                write!(
+                    line,
+                    "\"stroke\",\"stroke\":{{\"start_unix_us\":{},\"end_unix_us\":{},\"color\":\"#{:06x}\",\"points\":[",
+                    stroke.start_unix_us, stroke.end_unix_us, stroke.color
+                )?;
+                for (i, p) in stroke.points.iter().enumerate() {
+                    write!(line, "{}[{},{}]", if i > 0 { "," } else { "" }, p.x, p.y)?;
+                }
+                write!(line, "]}}")?;
+            }
+            Self::Undo => write!(line, "\"undo\"")?,
+            Self::Clear(count) => write!(line, "\"clear\",\"count\":{count}")?,
+        }
+        writeln!(line, "}}")?;
+        file.write_all(&line).context("appending overdraw event")
+    }
+}
+
+fn unix_us() -> Result<u128> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before Unix epoch")?
+        .as_micros())
 }
 
 enum Mode {
@@ -32,6 +88,7 @@ enum Outcome {
 
 struct Overlay {
     conn: RustConnection,
+    root: Window,
     win: Window,
     mask: Pixmap,
     canvas: Pixmap,
@@ -45,10 +102,11 @@ struct Overlay {
     color: u32,
     strokes: Vec<Stroke>,
     mode: Mode,
+    events: Option<File>,
 }
 
 impl Overlay {
-    fn new() -> Result<Self> {
+    fn new(events: Option<PathBuf>) -> Result<Self> {
         let (conn, screen_num) = x11rb::connect(None)?;
         ensure!(
             conn.extension_information(shape::X11_EXTENSION_NAME)?.is_some(),
@@ -56,6 +114,22 @@ impl Overlay {
         );
         let screen = &conn.setup().roots[screen_num];
         let (width, height) = (screen.width_in_pixels, screen.height_in_pixels);
+        let root = screen.root;
+        if events.is_some() {
+            let version = xinput::xi_query_version(&conn, 2, 0)?
+                .reply()
+                .context("the X server lacks XInput")?;
+            ensure!(version.major_version >= 2, "the X server lacks XInput 2");
+            xinput::xi_select_events(
+                &conn,
+                root,
+                &[xinput::EventMask {
+                    deviceid: Device::ALL_MASTER.into(),
+                    mask: vec![XIEventMask::RAW_BUTTON_PRESS],
+                }],
+            )?
+            .check()?;
+        }
 
         let canvas = conn.generate_id()?;
         conn.create_pixmap(screen.root_depth, canvas, screen.root, width, height)?;
@@ -114,8 +188,13 @@ impl Overlay {
             .context("grabbing F9 on the root window (is something else bound to it?)")?;
         conn.flush()?;
 
+        let events = events
+            .map(|path| File::create(&path).with_context(|| format!("creating {}", path.display())))
+            .transpose()?;
+
         Ok(Self {
             conn,
+            root,
             win,
             mask,
             canvas,
@@ -129,6 +208,7 @@ impl Overlay {
             color: 0xFF0000,
             strokes: Vec::new(),
             mode: Mode::PassThrough,
+            events,
         })
     }
 
@@ -162,11 +242,29 @@ impl Overlay {
                 };
                 self.handle_key(keysym, e.state)
             }
+            // X reports each scroll wheel step as a press of buttons 4 to 7.
+            Event::XinputRawButtonPress(e)
+                if matches!(self.mode, Mode::PassThrough) && matches!(e.detail, 1..=3 | 8..=9) =>
+            {
+                let time = unix_us()?;
+                let pointer = self.conn.query_pointer(self.root)?.reply()?;
+                self.log(
+                    Action::Click { button: e.detail, x: pointer.root_x, y: pointer.root_y },
+                    time,
+                )?;
+                Ok(Outcome::Idle)
+            }
             Event::ButtonPress(e) if e.detail == 1 => {
                 let Mode::Drawing { current } = &mut self.mode else { return Ok(Outcome::Idle) };
                 let p = Point { x: e.event_x, y: e.event_y };
                 // Two identical points: a zero-length wide line with round caps is a dot.
-                *current = Some(Stroke { color: self.color, points: vec![p, p] });
+                let start_unix_us = unix_us()?;
+                *current = Some(Stroke {
+                    start_unix_us,
+                    end_unix_us: start_unix_us,
+                    color: self.color,
+                    points: vec![p, p],
+                });
                 self.draw_segment(self.color, &[p, p])?;
                 Ok(Outcome::Painted)
             }
@@ -182,9 +280,7 @@ impl Overlay {
                 Ok(Outcome::Painted)
             }
             Event::ButtonRelease(e) if e.detail == 1 => {
-                if let Mode::Drawing { current } = &mut self.mode {
-                    self.strokes.extend(current.take());
-                }
+                self.commit_stroke()?;
                 Ok(Outcome::Idle)
             }
             Event::Error(err) => bail!("X11 error: {err:?}"),
@@ -200,17 +296,26 @@ impl Overlay {
             return Ok(Outcome::Idle);
         }
         if let Some(&(_, color)) = PEN_COLORS.iter().find(|(k, _)| *k == keysym) {
-            self.color = color;
+            if self.color != color {
+                self.color = color;
+                self.log(Action::Color(color), unix_us()?)?;
+            }
             return Ok(Outcome::Idle);
         }
         match keysym {
             key::F9 | key::Escape => self.set_mode(Mode::PassThrough)?,
             key::BackSpace => {
-                self.strokes.clear();
+                if !self.strokes.is_empty() {
+                    let count = self.strokes.len();
+                    self.strokes.clear();
+                    self.log(Action::Clear(count), unix_us()?)?;
+                }
                 self.redraw_all()?;
             }
             key::z if state.contains(KeyButMask::CONTROL) => {
-                self.strokes.pop();
+                if self.strokes.pop().is_some() {
+                    self.log(Action::Undo, unix_us()?)?;
+                }
                 self.redraw_all()?;
             }
             _ => {}
@@ -218,9 +323,27 @@ impl Overlay {
         Ok(Outcome::Idle)
     }
 
+    fn log(&mut self, action: Action<'_>, unix_us: u128) -> Result<()> {
+        match &mut self.events {
+            Some(file) => action.write(file, unix_us),
+            None => Ok(()),
+        }
+    }
+
+    fn commit_stroke(&mut self) -> Result<()> {
+        if let Mode::Drawing { current } = &mut self.mode
+            && let Some(mut stroke) = current.take()
+        {
+            stroke.end_unix_us = unix_us()?;
+            self.log(Action::Stroke(&stroke), stroke.end_unix_us)?;
+            self.strokes.push(stroke);
+        }
+        Ok(())
+    }
+
     fn set_mode(&mut self, mode: Mode) -> Result<()> {
-        if let Mode::Drawing { current } = &mut self.mode {
-            self.strokes.extend(current.take());
+        if matches!(self.mode, Mode::Drawing { .. }) {
+            self.commit_stroke()?;
             self.conn.ungrab_pointer(CURRENT_TIME)?;
             self.conn.ungrab_keyboard(CURRENT_TIME)?;
         }
@@ -257,7 +380,12 @@ impl Overlay {
                 keyboard.status
             );
         }
+        let action = match mode {
+            Mode::Drawing { .. } => Action::DrawOn,
+            Mode::PassThrough => Action::DrawOff,
+        };
         self.mode = mode;
+        self.log(action, unix_us()?)?;
         Ok(())
     }
 
@@ -292,6 +420,15 @@ impl Overlay {
     }
 }
 
+fn events_path() -> Result<Option<PathBuf>> {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    match args.as_slice() {
+        [] => Ok(None),
+        [flag, path] if flag == "--events" => Ok(Some(path.into())),
+        _ => bail!("usage: overdraw [--events PATH]"),
+    }
+}
+
 fn main() -> Result<()> {
-    Overlay::new()?.run()
+    Overlay::new(events_path()?)?.run()
 }
